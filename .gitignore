@@ -1,0 +1,8 @@
+Binaries/
+packages/
+TestResults/
+*.user
+*.suo
+**/obj/*
+**/bin/*
+.vs/
