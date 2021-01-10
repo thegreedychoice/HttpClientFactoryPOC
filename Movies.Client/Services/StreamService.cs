@@ -7,12 +7,18 @@ using System.Net.Http;
 using System.Net.Http.Headers;
 using System.Text;
 using System.Threading.Tasks;
+using Marvin.StreamExtensions;
 
 namespace Movies.Client.Services
 {
     public class StreamService : IIntegrationService
     {
-        private static HttpClient _httpClient = new HttpClient();
+        //private static HttpClient _httpClient = new HttpClient();
+        private static HttpClient _httpClient = new HttpClient(
+            new HttpClientHandler()
+            {
+                AutomaticDecompression = System.Net.DecompressionMethods.GZip 
+            });
 
         public StreamService()
         {
@@ -25,9 +31,28 @@ namespace Movies.Client.Services
         {
             //await GetPosterWithStream();
             //await GetPosterWithStreamAndCompletionMode();
-            await PostPosterWithStream();
-        }   
-        
+            //await PostPosterWithStream();
+            //await PostAndReadPosterWithStream();
+            await GetPosterWithGZipCompression();
+        }
+
+        private async Task GetPosterWithGZipCompression()
+        {
+            var request = new HttpRequestMessage(
+                HttpMethod.Get,
+                $"api/movies/d8663e5e-7494-4f81-8739-6e0de1bea7ee/posters/{Guid.NewGuid()}");
+            request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
+            request.Headers.AcceptEncoding.Add(new StringWithQualityHeaderValue("gzip"));
+
+            using (var response = await _httpClient.SendAsync(request))
+            {
+                response.EnsureSuccessStatusCode();
+
+                var stream = await response.Content.ReadAsStreamAsync();
+                var poster = stream.ReadAndDeserializeFromJson<Poster>();
+            }
+        }
+
         private async Task GetPosterWithStream()
         {
             var request = new HttpRequestMessage(
@@ -58,7 +83,8 @@ namespace Movies.Client.Services
             };
 
             var memoryContentStream = new MemoryStream();
-            memoryContentStream.SerializeToJsonAndWrite(posterForCreation);
+            memoryContentStream.SerializeToJsonAndWrite(posterForCreation,
+                new UTF8Encoding(), 1024, true);
 
             // memorystream set to 0, as its the starting position of the stream
             memoryContentStream.Seek(0, SeekOrigin.Begin);
@@ -86,7 +112,51 @@ namespace Movies.Client.Services
                 }
             }
 
+        }
 
+        private async Task PostAndReadPosterWithStream()
+        {
+            // generate a movie poster of 500KB
+            var random = new Random();
+            var generatedBytes = new byte[524288];
+            random.NextBytes(generatedBytes);
+
+            var posterForCreation = new PosterForCreation()
+            {
+                Name = "A new poster for the Big Lebowski",
+                Bytes = generatedBytes
+            };
+
+            var memoryContentStream = new MemoryStream();
+            memoryContentStream.SerializeToJsonAndWrite(posterForCreation, 
+                new UTF8Encoding(), 1024, true);
+
+            // memorystream set to 0, as its the starting position of the stream
+            memoryContentStream.Seek(0, SeekOrigin.Begin);
+
+            // since streams needs to be disposed off, scope request via using
+            using (var request = new HttpRequestMessage(
+                HttpMethod.Post,
+                $"api/movies/d8663e5e-7494-4f81-8739-6e0de1bea7ee/posters"))
+            {
+                request.Headers.Accept.Add(
+                    new MediaTypeWithQualityHeaderValue("application/json"));
+
+                using (var streamContent = new StreamContent(memoryContentStream))
+                {
+                    request.Content = streamContent;
+                    request.Content.Headers.ContentType =
+                        new MediaTypeHeaderValue("application/json");
+
+                    using (var response = await _httpClient
+                        .SendAsync(request, HttpCompletionOption.ResponseHeadersRead))
+                    {
+                        response.EnsureSuccessStatusCode();
+                        var stream = await response.Content.ReadAsStreamAsync();
+                        var poster = stream.ReadAndDeserializeFromJson<Poster>();
+                    }
+                }
+            }
         }
 
         // improving memory Use and performance with HttpCompletionMode
