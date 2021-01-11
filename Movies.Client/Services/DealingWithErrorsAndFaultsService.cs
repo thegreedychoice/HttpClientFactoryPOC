@@ -1,14 +1,122 @@
-﻿using System;
+﻿using Marvin.StreamExtensions;
+using Movies.Client.Models;
+using Newtonsoft.Json;
+using System;
 using System.Collections.Generic;
+using System.Net.Http;
+using System.Net.Http.Headers;
 using System.Text;
+using System.Threading;
 using System.Threading.Tasks;
 
 namespace Movies.Client.Services
 {
     public class DealingWithErrorsAndFaultsService : IIntegrationService
     {
+        private readonly CancellationTokenSource _cancellationTokenSource =
+            new CancellationTokenSource();
+
+        private readonly IHttpClientFactory _httpClientFactory;
+
+        public DealingWithErrorsAndFaultsService(IHttpClientFactory httpClientFactory) 
+        {
+            _httpClientFactory = httpClientFactory;
+        }
+
         public async Task Run()
         {
+            //await GetMovieAndDealWithInvalidResponses(_cancellationTokenSource.Token);
+            await PostMovieAndHandleValidationErrors(_cancellationTokenSource.Token);
+        }
+
+        private async Task GetMovieAndDealWithInvalidResponses(CancellationToken cancellationToken)
+        {
+            var httpClient = _httpClientFactory.CreateClient("MoviesClient");
+
+            var request = new HttpRequestMessage(
+                HttpMethod.Get,
+                "api/movies/5b1c2b4d-48c7-402a-80c3-cc796ad49c6b0");
+            request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
+            request.Headers.AcceptEncoding.Add(new StringWithQualityHeaderValue("gzip"));
+
+            using (var response = await httpClient.SendAsync(request,
+                HttpCompletionOption.ResponseHeadersRead,
+                cancellationToken))
+            {
+                if (!response.IsSuccessStatusCode)
+                {
+                    //inspect the status code
+                    if (response.StatusCode == System.Net.HttpStatusCode.NotFound)
+                    {
+                        //show this to the user
+                        Console.WriteLine("The requested movie can't be found!");
+                    }
+                }
+                else if (response.StatusCode == System.Net.HttpStatusCode.Unauthorized)
+                {
+                    //trigger a login flow
+                    return;
+                }
+
+                response.EnsureSuccessStatusCode();
+                var stream = await response.Content.ReadAsStreamAsync();
+                
+                var movie = stream.ReadAndDeserializeFromJson<Movie>();
+            }
+        }
+
+        private async Task PostMovieAndHandleValidationErrors(CancellationToken cancellationToken)
+        {
+            var httpClient = _httpClientFactory.CreateClient("MoviesClient");
+
+            var movieForCreation = new MovieForCreation()
+            {
+                Title = "Pulp Fiction",
+                Description = "Too short",
+                DirectorId = Guid.Parse("d28888e9-2ba9-473a-a40f-e38cb54f9b35"),
+                ReleaseDate = new DateTimeOffset(new DateTime(1992, 9, 2)),
+                Genre = "Crime, Drama"
+            };
+
+            var serializedMovieForCreation = JsonConvert.SerializeObject(movieForCreation);
+
+            using (var request = new HttpRequestMessage(
+                HttpMethod.Post,
+                "api/movies"))
+            {
+                request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
+                request.Headers.AcceptEncoding.Add(new StringWithQualityHeaderValue("gzip"));
+                request.Content = new StringContent(serializedMovieForCreation);
+                request.Content.Headers.ContentType = new MediaTypeWithQualityHeaderValue("application/json");
+
+                using (var response = await httpClient.SendAsync(request,
+                    HttpCompletionOption.ResponseHeadersRead,
+                    cancellationToken))
+                {
+                    if (!response.IsSuccessStatusCode)
+                    {
+                        //inspect the status code
+                        if (response.StatusCode == System.Net.HttpStatusCode.UnprocessableEntity)
+                        {
+                            //reaad validation errors from response body as stream
+                            var errorStream = await response.Content.ReadAsStreamAsync();
+                            var validationErrors = errorStream.ReadAndDeserializeFromJson();
+                            Console.WriteLine(validationErrors);
+                            return;
+                        }
+                        else
+                        {
+                            response.EnsureSuccessStatusCode();
+                        }
+                    }
+
+
+                    var stream = await response.Content.ReadAsStreamAsync();
+
+                    var movie = stream.ReadAndDeserializeFromJson<Movie>();
+
+                }
+            }
         }
     }
 }
