@@ -17,6 +17,7 @@ namespace Movies.Client.Services
     /// - Authentication for access tokens
     /// -Client-side cache implementation
     /// - Implementing HSTS support (Maarten Balliauw wrote a handler for this on github)
+    /// - Use Polly to do all this
     /// </summary>
     public class HttpHandlersService : IIntegrationService
     {
